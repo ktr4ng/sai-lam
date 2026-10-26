@@ -46,14 +46,17 @@ let questionDissolved = false;
 // ======================================================
 // SOUND & MEDIA
 // ======================================================
+const FONT_MAIN = "Zalando Sans Expanded";
 let soundCho, soundCoiXe, soundMayKhoan;
 let videoMorning, videoNight;
 let videoCam, handposeModel;
+let glitchBuffer;
 let predictions = [];
 let alphaMorning = 0;
 let alphaNight = 255;
 const FADE_SPEED = 0.25;
 let scene1StartTime = 0;
+let lastVolProgress = -1;
 
 function preload() {
   soundCho = loadSound("cho.wav");
@@ -65,6 +68,10 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   noCursor();
   textAlign(CENTER, CENTER);
+  textFont(FONT_MAIN);
+
+  glitchBuffer = createGraphics(160, 90);
+  glitchBuffer.pixelDensity(1);
 
   for (let i = 0; i < 150; i++) {
     particles.push(new DustParticle());
@@ -108,9 +115,17 @@ function setup() {
   videoNight.hide();
   videoMorning.volume(0);
   videoNight.volume(0);
+  videoMorning.elt.setAttribute("playsinline", "");
+  videoNight.elt.setAttribute("playsinline", "");
+  videoMorning.elt.setAttribute("webkit-playsinline", "");
+  videoNight.elt.setAttribute("webkit-playsinline", "");
+  videoMorning.elt.muted = true;
+  videoNight.elt.muted = true;
 
-  videoCam = createCapture(VIDEO);
-  videoCam.size(640, 480);
+  videoCam = createCapture(VIDEO, () => {
+    console.log("Webcam ready");
+  });
+  videoCam.size(320, 240);
   videoCam.hide();
   handposeModel = ml5.handpose(videoCam, { flipHorizontal: false }, () => {
     console.log("Handpose Ready");
@@ -147,65 +162,67 @@ function draw() {
 
 class DustParticle {
   constructor() {
-    this.pos = createVector(random(width), random(height));
-    this.vel = createVector(random(-0.5, 0.5), random(-0.5, 0.5));
-    this.size = random(1, 4);
-    this.color = random([
-      color(186, 210, 91),
-      color(140, 80, 255),
-      color(255, 120, 50),
-      color(50, 200, 255),
-      color(255, 255, 255),
-    ]);
+    this.x = random(width);
+    this.y = random(height);
+    this.vx = random(-0.5, 0.5);
+    this.vy = random(-0.5, 0.5);
+    this.size = random(1.5, 4);
+    const palette = [
+      [186, 210, 91],
+      [140, 80, 255],
+      [255, 120, 50],
+      [50, 200, 255],
+      [255, 255, 255],
+    ];
+    let c = random(palette);
+    this.r = c[0];
+    this.g = c[1];
+    this.b = c[2];
     this.noiseOffset = random(1000);
   }
 
   update() {
     let n = noise(this.noiseOffset + frameCount * 0.01);
-    this.pos.add(this.vel);
-    this.pos.x += map(n, 0, 1, -1, 1);
-    if (this.pos.x < 0) this.pos.x = width;
-    if (this.pos.x > width) this.pos.x = 0;
-    if (this.pos.y < 0) this.pos.y = height;
-    if (this.pos.y > height) this.pos.y = 0;
+    this.x += this.vx + map(n, 0, 1, -1, 1);
+    this.y += this.vy;
+    if (this.x < 0) this.x = width;
+    if (this.x > width) this.x = 0;
+    if (this.y < 0) this.y = height;
+    if (this.y > height) this.y = 0;
   }
 
   display(a) {
-    push();
+    if (a < 1) return;
     noStroke();
-    let finalColor = color(
-      red(this.color),
-      green(this.color),
-      blue(this.color),
-      a * 0.6,
-    );
-    fill(finalColor);
-    if (a > 50) {
-      drawingContext.shadowBlur = this.size * 2;
-      drawingContext.shadowColor = finalColor;
-    }
-    ellipse(this.pos.x, this.pos.y, this.size);
-    pop();
+    // Soft outer glow halo (fast & GPU friendly, no shadowBlur stall)
+    fill(this.r, this.g, this.b, a * 0.15);
+    ellipse(this.x, this.y, this.size * 2.8);
+    // Core particle
+    fill(this.r, this.g, this.b, a * 0.7);
+    ellipse(this.x, this.y, this.size);
   }
 }
 
 class SandParticle {
   constructor(x, y) {
-    this.pos = createVector(x, y);
-    this.vel = createVector(random(-1.5, 1.5), random(-2.5, 0.5));
-    this.acc = createVector(0, -0.05);
+    this.x = x;
+    this.y = y;
+    this.vx = random(-1.5, 1.5);
+    this.vy = random(-2.5, 0.5);
+    this.ay = -0.05;
     this.alpha = 255;
-    this.size = random(1, 3);
+    this.size = random(1.5, 3);
   }
   update() {
-    this.vel.add(this.acc);
-    this.pos.add(this.vel);
+    this.vy += this.ay;
+    this.x += this.vx;
+    this.y += this.vy;
     this.alpha -= 4;
   }
   display() {
     noStroke();
     fill(255, this.alpha);
-    ellipse(this.pos.x, this.pos.y, this.size);
+    ellipse(this.x, this.y, this.size);
   }
 }
 
@@ -222,7 +239,7 @@ function drawQuietScene() {
   if (!experienceStarted) {
     fill(240);
     noStroke();
-    textFont("Zalando Sans Expanded");
+    textFont(FONT_MAIN);
     textSize(35);
     text("Wear headphone for a better experience", width / 2, height / 2 - 20);
 
@@ -258,13 +275,16 @@ function drawQuietScene() {
   if (hover) progress = min(progress + 0.003, 1);
   else progress = lerp(progress, 0, 0.05);
 
-  soundCho.setVolume(progress * 0.7);
-  soundCoiXe.setVolume(progress * 0.6);
-  soundMayKhoan.setVolume(progress * 0.8);
+  if (abs(progress - lastVolProgress) > 0.008) {
+    soundCho.setVolume(progress * 0.7);
+    soundCoiXe.setVolume(progress * 0.6);
+    soundMayKhoan.setVolume(progress * 0.8);
+    lastVolProgress = progress;
+  }
 
   for (let c of cracks) c.draw(progress);
 
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   textSize(32);
   fill(245);
   text("This is a quiet space.", width / 2, height * 0.48);
@@ -288,7 +308,7 @@ function drawQuietScene() {
 function drawFinalQuestionEffect() {
   if (showFinalQuestion) {
     push();
-    textFont("Zalando Sans Expanded");
+    textFont(FONT_MAIN);
 
     // --- Dòng 1: Câu hỏi chính ---
     textSize(20);
@@ -333,7 +353,7 @@ function drawFinalQuestionEffect() {
 function dissolveQuestion() {
   if (!questionDissolved) {
     questionDissolved = true;
-    textFont("Zalando Sans Expanded");
+    textFont(FONT_MAIN);
 
     // Hạt cho câu hỏi chính
     textSize(20);
@@ -368,7 +388,7 @@ function drawRestartUI() {
   let x = 60,
     y = 50;
   let txt = "RESTART THE JOURNEY";
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   textSize(11);
   textStyle(BOLD);
   let tw = textWidth(txt);
@@ -423,7 +443,7 @@ function drawNavigationText(fixedAlpha) {
   let posY = height - 60;
   push();
   textAlign(CENTER, CENTER);
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   noStroke();
   let txt = "click here to continue";
   textSize(12);
@@ -466,7 +486,7 @@ function drawInfoBtn() {
   noStroke();
   fill(255);
   textAlign(CENTER, CENTER);
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   textStyle(BOLD);
   textSize(18);
   text("i", x, y - 2);
@@ -484,7 +504,7 @@ function drawInstructionModal() {
   rect(width / 2, height / 2, 400, 220, 30);
   noStroke();
   fill(255);
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   textSize(20);
   textStyle(BOLD);
   text("HOW TO INTERACT", width / 2, height / 2 - 60);
@@ -513,7 +533,7 @@ function drawUI() {
   drawingContext.shadowBlur = 0;
   fill(255);
   textAlign(LEFT);
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   textStyle(BOLD);
   textSize(10);
   text("FILTER INTENSITY", width - 210, height - 125);
@@ -566,7 +586,9 @@ function drawVideoScene() {
       tint(255, alphaNight);
       image(videoNight, 0, 0, width, height);
     }
-  } else applyPixelatedGlitch(intensity);
+  } else {
+    applyPixelatedGlitch(intensity);
+  }
   pop();
   videoMorning.volume((alphaMorning / 255) * masterVol);
   videoNight.volume((alphaNight / 255) * masterVol);
@@ -575,21 +597,31 @@ function drawVideoScene() {
 function applyPixelatedGlitch(intensity) {
   let activeVid = alphaMorning > alphaNight ? videoMorning : videoNight;
   let activeAlpha = alphaMorning > alphaNight ? alphaMorning : alphaNight;
-  activeVid.loadPixels();
-  if (activeVid.pixels.length > 0) {
-    let stepSize = floor(map(intensity, 1, 50, 4, 40));
-    for (let y = 0; y < height; y += stepSize) {
-      for (let x = 0; x < width; x += stepSize) {
-        let vidX = floor(map(x, 0, width, 0, activeVid.width));
-        let vidY = floor(map(y, 0, height, 0, activeVid.height));
-        let index = (vidX + vidY * activeVid.width) * 4;
-        let r = activeVid.pixels[index];
-        let g = activeVid.pixels[index + 1];
-        let b = activeVid.pixels[index + 2];
+
+  let stepSize = floor(map(intensity, 1, 50, 8, 40));
+  let cols = ceil(width / stepSize);
+  let rows = ceil(height / stepSize);
+
+  if (glitchBuffer.width !== cols || glitchBuffer.height !== rows) {
+    glitchBuffer.resizeCanvas(cols, rows);
+  }
+
+  glitchBuffer.image(activeVid, 0, 0, cols, rows);
+  glitchBuffer.loadPixels();
+
+  if (glitchBuffer.pixels.length > 0) {
+    noStroke();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        let index = (c + r * cols) * 4;
+        let redVal = glitchBuffer.pixels[index];
+        let greenVal = glitchBuffer.pixels[index + 1];
+        let blueVal = glitchBuffer.pixels[index + 2];
+        let x = c * stepSize;
+        let y = r * stepSize;
         let xOffset = random(-intensity, intensity) * 1.5;
         let yOffset = random(-intensity, intensity) * 0.3;
-        fill(r, g, b, activeAlpha);
-        noStroke();
+        fill(redVal, greenVal, blueVal, activeAlpha);
         rect(
           x + xOffset,
           y + yOffset,
@@ -634,7 +666,7 @@ function drawFixedBubble(x, y, title, status, a, s) {
   drawingContext.fillStyle = grad;
   rect(0, 0, w, h, 20);
   textAlign(LEFT, TOP);
-  textFont("Zalando Sans Expanded");
+  textFont(FONT_MAIN);
   fill(30, a * 0.9);
   textSize(16);
   textStyle(BOLD);
@@ -785,7 +817,6 @@ function startExperience() {
 }
 
 function detectHover(x, y) {
-  textFont("Zalando Sans Expanded");
   textSize(18);
   let w = textWidth("How long can it remain quiet?");
   hover =
@@ -797,30 +828,35 @@ function detectHover(x, y) {
 
 class Crack {
   constructor(x, y, a) {
-    this.pts = [];
+    this.ptsX = [];
+    this.ptsY = [];
     let px = x,
       py = y;
-    for (let i = 0; i < 1000; i += 5) {
-      px += cos(a) * 5 + random(-1, 1);
-      py += sin(a) * 5 + random(-1, 1);
-      this.pts.push(createVector(px, py));
+    for (let i = 0; i < 600; i += 6) {
+      px += cos(a) * 6 + random(-1.2, 1.2);
+      py += sin(a) * 6 + random(-1.2, 1.2);
+      this.ptsX.push(px);
+      this.ptsY.push(py);
     }
-    this.col = color(random(150, 255), random(150, 255), random(200, 255));
+    this.r = random(150, 255);
+    this.g = random(150, 255);
+    this.b = random(200, 255);
   }
   draw(p) {
     if (p < 0.01) return;
-    let n = floor(this.pts.length * p);
+    let n = floor(this.ptsX.length * p);
+    if (n < 2) return;
     push();
     noFill();
-    stroke(red(this.col), green(this.col), blue(this.col), 40);
+    stroke(this.r, this.g, this.b, 35);
     strokeWeight(3);
     beginShape();
-    for (let j = 0; j < n; j++) vertex(this.pts[j].x, this.pts[j].y);
+    for (let j = 0; j < n; j++) vertex(this.ptsX[j], this.ptsY[j]);
     endShape();
-    stroke(this.col);
+    stroke(this.r, this.g, this.b, 210);
     strokeWeight(1);
     beginShape();
-    for (let j = 0; j < n; j++) vertex(this.pts[j].x, this.pts[j].y);
+    for (let j = 0; j < n; j++) vertex(this.ptsX[j], this.ptsY[j]);
     endShape();
     pop();
   }
@@ -828,7 +864,7 @@ class Crack {
 
 function initCracks() {
   cracks = [];
-  for (let i = 0; i < 50; i++)
+  for (let i = 0; i < 35; i++)
     cracks.push(new Crack(width / 2, height * 0.48, random(TWO_PI)));
 }
 
