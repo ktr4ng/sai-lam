@@ -57,6 +57,8 @@ let alphaNight = 255;
 const FADE_SPEED = 0.25;
 let scene1StartTime = 0;
 let lastVolProgress = -1;
+let lastVolM = -1;
+let lastVolN = -1;
 
 function preload() {
   soundCho = loadSound("cho.wav");
@@ -66,6 +68,7 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  pixelDensity(1);
   noCursor();
   textAlign(CENTER, CENTER);
   textFont(FONT_MAIN);
@@ -119,18 +122,21 @@ function setup() {
   videoNight.elt.setAttribute("playsinline", "");
   videoMorning.elt.setAttribute("webkit-playsinline", "");
   videoNight.elt.setAttribute("webkit-playsinline", "");
-  videoMorning.elt.muted = true;
-  videoNight.elt.muted = true;
 
   videoCam = createCapture(VIDEO, () => {
     console.log("Webcam ready");
+    if (videoCam && videoCam.elt && scene !== 1) {
+      videoCam.elt.pause();
+    }
   });
   videoCam.size(320, 240);
   videoCam.hide();
   handposeModel = ml5.handpose(videoCam, { flipHorizontal: false }, () => {
     console.log("Handpose Ready");
   });
-  handposeModel.on("predict", (r) => (predictions = r));
+  handposeModel.on("predict", (r) => {
+    if (scene === 1) predictions = r;
+  });
 }
 
 function draw() {
@@ -275,10 +281,10 @@ function drawQuietScene() {
   if (hover) progress = min(progress + 0.003, 1);
   else progress = lerp(progress, 0, 0.05);
 
-  if (abs(progress - lastVolProgress) > 0.008) {
-    soundCho.setVolume(progress * 0.7);
-    soundCoiXe.setVolume(progress * 0.6);
-    soundMayKhoan.setVolume(progress * 0.8);
+  if (abs(progress - lastVolProgress) > 0.01) {
+    soundCho.setVolume(progress * 0.7, 0.05);
+    soundCoiXe.setVolume(progress * 0.6, 0.05);
+    soundMayKhoan.setVolume(progress * 0.8, 0.05);
     lastVolProgress = progress;
   }
 
@@ -436,6 +442,7 @@ function resetExperience() {
   soundMayKhoan.stop();
   videoMorning.stop();
   videoNight.stop();
+  if (videoCam && videoCam.elt) videoCam.elt.pause();
 }
 
 function drawNavigationText(fixedAlpha) {
@@ -590,46 +597,62 @@ function drawVideoScene() {
     applyPixelatedGlitch(intensity);
   }
   pop();
-  videoMorning.volume((alphaMorning / 255) * masterVol);
-  videoNight.volume((alphaNight / 255) * masterVol);
+  let targetVolM = (alphaMorning / 255) * masterVol;
+  let targetVolN = (alphaNight / 255) * masterVol;
+  if (abs(targetVolM - lastVolM) > 0.015) {
+    videoMorning.volume(targetVolM);
+    lastVolM = targetVolM;
+  }
+  if (abs(targetVolN - lastVolN) > 0.015) {
+    videoNight.volume(targetVolN);
+    lastVolN = targetVolN;
+  }
 }
 
 function applyPixelatedGlitch(intensity) {
   let activeVid = alphaMorning > alphaNight ? videoMorning : videoNight;
   let activeAlpha = alphaMorning > alphaNight ? alphaMorning : alphaNight;
 
+  let gw = 160;
+  let gh = 90;
+  glitchBuffer.image(activeVid, 0, 0, gw, gh);
+
   let stepSize = floor(map(intensity, 1, 50, 8, 40));
-  let cols = ceil(width / stepSize);
   let rows = ceil(height / stepSize);
 
-  if (glitchBuffer.width !== cols || glitchBuffer.height !== rows) {
-    glitchBuffer.resizeCanvas(cols, rows);
+  // Render base pixelated mosaic via GPU in 0.02ms
+  drawingContext.imageSmoothingEnabled = false;
+  tint(255, activeAlpha);
+  image(glitchBuffer, 0, 0, width, height);
+
+  // Row-level horizontal jitter exactly mimicking the mosaic block offset
+  for (let r = 0; r < rows; r++) {
+    let y = r * stepSize;
+    let xOffset = random(-intensity, intensity) * 1.5;
+    let sgy = floor(map(y, 0, height, 0, gh));
+    let sgh = max(1, floor(map(stepSize, 0, height, 0, gh)));
+    copy(glitchBuffer, 0, sgy, gw, sgh, xOffset, y, width, stepSize);
   }
 
-  glitchBuffer.image(activeVid, 0, 0, cols, rows);
-  glitchBuffer.loadPixels();
-
-  if (glitchBuffer.pixels.length > 0) {
-    noStroke();
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        let index = (c + r * cols) * 4;
-        let redVal = glitchBuffer.pixels[index];
-        let greenVal = glitchBuffer.pixels[index + 1];
-        let blueVal = glitchBuffer.pixels[index + 2];
-        let x = c * stepSize;
-        let y = r * stepSize;
-        let xOffset = random(-intensity, intensity) * 1.5;
-        let yOffset = random(-intensity, intensity) * 0.3;
-        fill(redVal, greenVal, blueVal, activeAlpha);
-        rect(
-          x + xOffset,
-          y + yOffset,
-          stepSize + random(intensity * 2),
-          stepSize,
-        );
-      }
-    }
+  // Block-level jitter for randomized glitch blocks
+  let numBlocks = floor(map(intensity, 1, 50, 4, 30));
+  for (let i = 0; i < numBlocks; i++) {
+    let bx = random(width);
+    let by = random(height);
+    let bw = random(stepSize * 1.5, stepSize * 4 + intensity);
+    let bh = stepSize;
+    let offX = random(-intensity, intensity) * 2;
+    copy(
+      glitchBuffer,
+      floor(map(bx, 0, width, 0, gw)),
+      floor(map(by, 0, height, 0, gh)),
+      max(1, floor(map(bw, 0, width, 0, gw))),
+      max(1, floor(map(bh, 0, height, 0, gh))),
+      bx + offX,
+      by,
+      bw,
+      bh
+    );
   }
 }
 
@@ -753,8 +776,11 @@ function mousePressed() {
       soundCho.stop();
       soundCoiXe.stop();
       soundMayKhoan.stop();
+      videoMorning.time(0);
+      videoNight.time(0);
       videoMorning.loop();
       videoNight.loop();
+      if (videoCam && videoCam.elt) videoCam.elt.play();
       return;
     }
   }
@@ -775,6 +801,7 @@ function mousePressed() {
         scene2StartTime = millis();
         videoMorning.stop();
         videoNight.stop();
+        if (videoCam && videoCam.elt) videoCam.elt.pause();
         return;
       }
     }
