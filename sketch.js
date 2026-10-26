@@ -109,6 +109,10 @@ function setup() {
   sliderVolume.style("width", "180px");
   sliderVolume.style(sliderStyle);
   sliderVolume.hide();
+  sliderVolume.input(() => {
+    if (videoMorning && videoMorning.elt) videoMorning.elt.muted = false;
+    if (videoNight && videoNight.elt) videoNight.elt.muted = false;
+  });
 
   initCracks();
 
@@ -599,14 +603,16 @@ function drawVideoScene() {
   pop();
   let targetVolM = (alphaMorning / 255) * masterVol;
   let targetVolN = (alphaNight / 255) * masterVol;
-  if (abs(targetVolM - lastVolM) > 0.015) {
-    videoMorning.volume(targetVolM);
-    lastVolM = targetVolM;
+
+  if (targetVolM > 0 && videoMorning.elt.muted) {
+    videoMorning.elt.muted = false;
   }
-  if (abs(targetVolN - lastVolN) > 0.015) {
-    videoNight.volume(targetVolN);
-    lastVolN = targetVolN;
+  if (targetVolN > 0 && videoNight.elt.muted) {
+    videoNight.elt.muted = false;
   }
+
+  videoMorning.volume(targetVolM);
+  videoNight.volume(targetVolN);
 }
 
 function applyPixelatedGlitch(intensity) {
@@ -778,8 +784,13 @@ function mousePressed() {
       soundMayKhoan.stop();
       videoMorning.time(0);
       videoNight.time(0);
+      videoMorning.elt.muted = false;
+      videoNight.elt.muted = false;
       videoMorning.loop();
       videoNight.loop();
+      let initVol = sliderVolume.value() / 100;
+      videoMorning.volume(initVol);
+      videoNight.volume(0);
       if (videoCam && videoCam.elt) videoCam.elt.play();
       return;
     }
@@ -833,6 +844,8 @@ function drawCustomCursor() {
 
 function startExperience() {
   userStartAudio();
+  if (videoMorning && videoMorning.elt) videoMorning.elt.muted = false;
+  if (videoNight && videoNight.elt) videoNight.elt.muted = false;
   soundCho.loop();
   soundCoiXe.loop();
   soundMayKhoan.loop();
